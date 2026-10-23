@@ -1,7 +1,8 @@
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useCarteira } from '../composables/useCarteira'
+import { useCotacoes } from '../composables/useCotacoes'
 
 // Dados compartilhados com o Dashboard
 const {
@@ -10,6 +11,99 @@ const {
   patrimonio,
   totalCotas,
 } = useCarteira()
+
+
+const {
+  cotacoes,
+  carregando,
+  atualizarCotacoes,
+} = useCotacoes()
+
+const tickers = computed(() =>
+  posicoes.value.map(fii => fii.ticker)
+)
+
+// Consulta cotações ao abrir a página ou alterar a carteira.
+watch(
+  tickers,
+  novos => {
+    if (novos.length) atualizarCotacoes(novos)
+  },
+  { immediate: true }
+)
+
+const posicoesMercado = computed(() =>
+  posicoes.value.map(fii => {
+    const cotacao = cotacoes[fii.ticker]
+    const precoAtual = cotacao?.preco ?? null
+
+    const valorMercado = precoAtual === null
+      ? null
+      : fii.quantidade * precoAtual
+
+    const resultado = valorMercado === null
+      ? null
+      : valorMercado - fii.custo
+
+    const percentual = resultado === null || fii.custo <= 0
+      ? null
+      : resultado / fii.custo * 100
+
+    return {
+      ...fii,
+      precoAtual,
+      valorMercado,
+      resultado,
+      percentual,
+      atualizadoEm: cotacao?.atualizadoEm ?? null,
+    }
+  })
+)
+
+const coberturaCompleta = computed(() =>
+  posicoesMercado.value.length > 0 &&
+  posicoesMercado.value.every(fii => fii.valorMercado !== null)
+)
+
+const patrimonioMercado = computed(() => {
+  if (!coberturaCompleta.value) return null
+
+  return posicoesMercado.value.reduce(
+    (total, fii) => total + fii.valorMercado, 0
+  )
+})
+
+const resultadoTotal = computed(() =>
+  patrimonioMercado.value === null
+    ? null
+    : patrimonioMercado.value - patrimonio.value
+)
+
+const resultadoPercentual = computed(() =>
+  resultadoTotal.value === null || patrimonio.value <= 0
+    ? null
+    : resultadoTotal.value / patrimonio.value * 100
+)
+
+const formatarPercentual = valor =>
+  `${valor >= 0 ? '+' : ''}${valor.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`
+
+const formatarHorario = valor => {
+  if (!valor) return 'Não informado'
+
+  const data = new Date(valor)
+  if (Number.isNaN(data.getTime())) return 'Não informado'
+
+  return data.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    dateStyle: 'short',
+    timeStyle: 'short',
+  })
+}
+
 
 const hoje = new Date()
 const dataAtual = [
@@ -162,6 +256,74 @@ function desfazerUltima() {
       </article>
     </div>
 
+
+<div class="mercado-resumo">
+  <div class="mercado-cabecalho">
+    <h2>Desempenho de Mercado</h2>
+
+    <button
+      class="botao-secundario"
+      :disabled="carregando"
+      @click="atualizarCotacoes(tickers, true)"
+    >
+      {{ carregando ? 'Atualizando...' : '↻ Atualizar cotações' }}
+    </button>
+  </div>
+
+  <div class="mercado-indicadores">
+    <article class="stat-card">
+      <div class="stat-heading">Valor de mercado</div>
+      <h2>
+        {{
+          patrimonioMercado === null
+            ? '—'
+            : moeda(patrimonioMercado)
+        }}
+      </h2>
+    </article>
+
+    <article class="stat-card">
+      <div class="stat-heading">Lucro / Prejuízo</div>
+      <h2
+        :class="{
+          positive: resultadoTotal > 0,
+          negativo: resultadoTotal < 0,
+        }"
+      >
+        {{
+          resultadoTotal === null
+            ? '—'
+            : moeda(resultadoTotal)
+        }}
+      </h2>
+    </article>
+
+    <article class="stat-card">
+      <div class="stat-heading">Variação percentual</div>
+      <h2
+        :class="{
+          positive: resultadoPercentual > 0,
+          negativo: resultadoPercentual < 0,
+        }"
+      >
+        {{
+          resultadoPercentual === null
+            ? '—'
+            : formatarPercentual(resultadoPercentual)
+        }}
+      </h2>
+    </article>
+  </div>
+
+  <p v-if="posicoes.length && !coberturaCompleta">
+    {{
+      carregando
+        ? 'Consultando cotações...'
+        : 'Algumas cotações estão indisponíveis.'
+    }}
+  </p>
+</div>
+
     <!-- FORMULÁRIO E POSIÇÕES -->
     <div class="carteira-layout">
       <div class="painel">
@@ -247,37 +409,70 @@ function desfazerUltima() {
         </p>
 
         <div class="table-scroll">
-          <table v-if="posicoes.length">
-            <thead>
-              <tr>
-                <th>FII</th>
-                <th>Cotas</th>
-                <th>Preço médio</th>
-                <th>Custo total</th>
-              </tr>
-            </thead>
+          
+<table v-if="posicoes.length">
+  <thead>
+    <tr>
+      <th>FII</th>
+      <th>Cotas</th>
+      <th>Preço médio</th>
+      <th>Cotação</th>
+      <th>Custo total</th>
+      <th>Valor de mercado</th>
+      <th>Lucro / Prejuízo</th>
+      <th>Referência</th>
+    </tr>
+  </thead>
 
-            <tbody>
-              <tr
-                v-for="fii in posicoes"
-                :key="fii.ticker"
-              >
-                <td>
-                  <strong>{{ fii.ticker }}</strong>
-                </td>
+  <tbody>
+    <tr
+      v-for="fii in posicoesMercado"
+      :key="fii.ticker"
+    >
+      <td><strong>{{ fii.ticker }}</strong></td>
+      <td>{{ fii.quantidade }}</td>
+      <td>{{ moeda(fii.precoMedio) }}</td>
 
-                <td>{{ fii.quantidade }}</td>
+      <td>
+        {{
+          fii.precoAtual === null
+            ? 'Indisponível'
+            : moeda(fii.precoAtual)
+        }}
+      </td>
 
-                <td>
-                  {{ moeda(fii.precoMedio) }}
-                </td>
+      <td>{{ moeda(fii.custo) }}</td>
 
-                <td class="positive">
-                  {{ moeda(fii.custo) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+      <td>
+        {{
+          fii.valorMercado === null
+            ? '—'
+            : moeda(fii.valorMercado)
+        }}
+      </td>
+
+      <td
+        :class="{
+          positive: fii.resultado > 0,
+          negativo: fii.resultado < 0,
+        }"
+      >
+        <template v-if="fii.resultado !== null">
+          {{ moeda(fii.resultado) }}
+
+          <small class="variacao">
+            {{ formatarPercentual(fii.percentual) }}
+          </small>
+        </template>
+
+        <template v-else>—</template>
+      </td>
+
+      <td>{{ formatarHorario(fii.atualizadoEm) }}</td>
+    </tr>
+  </tbody>
+</table>
+
 
           <div v-else class="estado-vazio">
             <div>▣</div>
@@ -540,4 +735,55 @@ select:focus {
     flex-direction: column;
   }
 }
+
+
+.mercado-resumo {
+  margin-top: 30px;
+}
+
+.mercado-cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 18px;
+}
+
+.mercado-cabecalho h2 {
+  margin: 0;
+  font-size: 23px;
+}
+
+.mercado-indicadores {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.negativo {
+  color: #fb7185;
+}
+
+.variacao {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.botao-secundario:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .mercado-indicadores {
+    grid-template-columns: 1fr;
+  }
+
+  .mercado-cabecalho {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 </style>

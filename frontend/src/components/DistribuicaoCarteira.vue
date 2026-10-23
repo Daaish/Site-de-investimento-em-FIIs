@@ -1,0 +1,261 @@
+
+<script setup>
+import { computed } from 'vue'
+import { Doughnut } from 'vue-chartjs'
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js'
+
+import { useCarteira } from '../composables/useCarteira'
+import { useCotacoes } from '../composables/useCotacoes'
+
+ChartJS.register(ArcElement, Tooltip, Legend)
+
+const { posicoes } = useCarteira()
+const { cotacoes } = useCotacoes()
+
+const cores = [
+  '#20d69f',
+  '#60a5fa',
+  '#a78bfa',
+  '#fbbf24',
+  '#fb7185',
+  '#22d3ee',
+  '#f97316',
+  '#c084fc',
+]
+
+const moeda = valor =>
+  Number(valor).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  })
+
+const distribuicao = computed(() =>
+  posicoes.value.map(fii => {
+    const preco = cotacoes[fii.ticker]?.preco
+
+    return {
+      ticker: fii.ticker,
+      valor: preco != null ? fii.quantidade * preco : null
+    }
+  })
+)
+
+const completo = computed(() =>
+  distribuicao.value.length > 0 &&
+  distribuicao.value.every(fii =>
+    Number.isFinite(fii.valor) && fii.valor > 0
+  )
+)
+
+const total = computed(() =>
+  completo.value
+    ? distribuicao.value.reduce((soma, fii) => soma + fii.valor, 0)
+    : 0
+)
+
+const dadosGrafico = computed(() => ({
+  labels: distribuicao.value.map(fii => fii.ticker),
+  datasets: [{
+    data: distribuicao.value.map(fii => fii.valor ?? 0),
+    backgroundColor: distribuicao.value.map(
+      (_, indice) => cores[indice % cores.length]
+    ),
+    borderColor: '#101a2a',
+    borderWidth: 3,
+    hoverOffset: 8,
+  }]
+}))
+
+const opcoes = {
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: '73%',
+  plugins: {
+    legend: {
+      display: false,
+    },
+    tooltip: {
+      callbacks: {
+        label: contexto =>
+          `${contexto.label}: ${moeda(contexto.parsed)}`
+      }
+    }
+  }
+}
+</script>
+
+<template>
+  <article class="grafico-card">
+    <div class="grafico-cabecalho">
+      <div>
+        <h2>Distribuição da Carteira</h2>
+        <p>Participação de cada FII no patrimônio de mercado.</p>
+      </div>
+      <span class="grafico-tag">Por ativo</span>
+    </div>
+
+    <div v-if="completo" class="grafico-conteudo">
+      <div class="grafico-container">
+        <Doughnut :data="dadosGrafico" :options="opcoes" />
+
+        <div class="grafico-centro">
+          <span>Patrimônio</span>
+          <strong>{{ moeda(total) }}</strong>
+        </div>
+      </div>
+
+      <div class="legenda">
+        <div
+          v-for="(fii, indice) in distribuicao"
+          :key="fii.ticker"
+          class="legenda-item"
+        >
+          <span
+            class="cor"
+            :style="{
+              background: cores[indice % cores.length]
+            }"
+          ></span>
+
+          <span class="ticker">{{ fii.ticker }}</span>
+
+          <strong>
+            {{ (fii.valor / total * 100).toFixed(1) }}%
+          </strong>
+        </div>
+      </div>
+    </div>
+
+    <div v-else class="grafico-vazio">
+      <p v-if="!posicoes.length">
+        Cadastre seus primeiros FIIs para visualizar a distribuição.
+      </p>
+      <p v-else>
+        Aguardando todas as cotações para calcular a distribuição.
+      </p>
+    </div>
+  </article>
+</template>
+
+<style scoped>
+.grafico-card {
+  background: #101a2a;
+  border: 1px solid #223047;
+  border-radius: 14px;
+  padding: 26px;
+  margin-top: 24px;
+}
+
+.grafico-cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 15px;
+}
+
+.grafico-cabecalho h2 {
+  font-size: 23px;
+  margin: 0;
+}
+
+.grafico-cabecalho p {
+  font-size: 13px;
+  margin: 6px 0;
+}
+
+.grafico-tag {
+  background: #17392f;
+  color: #34e4ac;
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+}
+
+.grafico-conteudo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 55px;
+  padding-top: 25px;
+}
+
+.grafico-container {
+  width: 290px;
+  height: 290px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.grafico-centro {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+  pointer-events: none;
+}
+
+.grafico-centro span {
+  color: #8393ab;
+  font-size: 12px;
+}
+
+.grafico-centro strong {
+  font-size: 19px;
+  color: #edf2fb;
+  margin-top: 5px;
+}
+
+.legenda {
+  flex: 1;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.legenda-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.cor {
+  width: 11px;
+  height: 11px;
+  border-radius: 4px;
+}
+
+.ticker { flex: 1; color: #a9b8cb; }
+.legenda-item strong { color: #edf2fb; }
+
+.grafico-vazio {
+  text-align: center;
+  padding: 60px 15px;
+  color: #91a2b7;
+}
+
+@media (max-width: 760px) {
+  .grafico-conteudo {
+    flex-direction: column;
+    gap: 25px;
+  }
+
+  .grafico-container {
+    width: min(100%, 290px);
+    height: 290px;
+  }
+
+  .legenda { width: 100%; max-width: none; }
+
+  .grafico-card { padding: 17px; }
+}
+</style>
